@@ -1,0 +1,21 @@
+# Blueprint Render — déploiement "1 clic" de l'app complète via GitHub.
+# Dashboard Render → New → Blueprint → choisir ce repo → renseigner les
+# variables marquées sync:false → Apply. HTTPS gratuit inclus.
+services:
+  - type: web
+    name: sillage
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/status
+    envVars:
+      - key: TIKTOK_CLIENT_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: ACTION_GATEWAY_URL
+        sync: false
+      - key: ACTION_GATEWAY_SECRET
+        sync: false
+      # Render injecte PORT automatiquement ; le serveur écoute 0.0.0.0.

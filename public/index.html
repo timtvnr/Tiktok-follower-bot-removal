@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sillage — Retirer des followers, simplement</title>
+<meta name="description" content="Pas de formulaires, pas de jargon : cochez les comptes à retirer, cliquez sur le gros bouton, laissez la cadence humaine faire le reste.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ccf655'/%3E%3Cpath d='M6 20c5-1 6-8 11-8s8 6 9 6' stroke='%23101208' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='6' cy='20' r='2.6' fill='%23101208'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="#ccf655"/>
+      <path d="M6 20c5-1 6-8 11-8s8 6 9 6" stroke="#101208" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      <circle cx="6" cy="20" r="2.6" fill="#101208"/>
+    </svg>
+    <div>
+      <h1>Sillage</h1>
+      <p class="tagline">Retirer des followers, un geste à la fois.</p>
+    </div>
+  </div>
+  <button id="connectionPill" class="connection-pill" title="Lier votre compte TikTok (OAuth officiel)">
+    <span class="dot"></span><span id="connectionText">Vérification…</span><span id="disconnectBtn" class="pill-link hidden">Délier</span>
+  </button>
+</header>
+
+<div id="demoBanner" class="demo-banner"><strong>Mode démo.</strong> Gestes simulés — rien n’est envoyé à TikTok tant qu’un canal d’action n’est pas branché (voir README).</div>
+
+<main class="wrap">
+
+  <!-- ══════════ CARTE PRINCIPALE : l'action ══════════ -->
+  <section class="hero" aria-label="Action principale">
+    <div class="hero-text">
+      <span class="kicker" id="heroKicker">Étape 1 — choisissez les comptes</span>
+      <h2 id="heroTitle">Qui retire-t-on ?</h2>
+      <p id="heroSub" class="hero-sub">Cochez des comptes ci-dessous, ou laissez le bouton « Suspects » faire la pré-sélection.</p>
+      <p class="hero-meta"><span class="today-pill" id="todayPill">Aujourd’hui : 0/50</span><span id="cooldownText" class="cooldown">Geste possible</span></p>
+    </div>
+
+    <div class="hero-action">
+      <div class="ring-wrap" id="ringWrap" aria-hidden="true">
+        <svg class="ring" viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"/>
+        </svg>
+        <div class="ring-center"><span id="ringTimer" class="ring-timer">––:––</span><span id="ringLabel" class="ring-label">en attente</span></div>
+      </div>
+
+      <button id="primaryBtn" class="cta" disabled>
+        <span class="cta-main" id="primaryBtnLabel">Retirer la sélection</span>
+        <span class="cta-sub" id="primaryBtnSub">cochez d’abord des comptes</span>
+      </button>
+      <button id="stopBtn" class="stop hidden">Arrêter la session</button>
+    </div>
+  </section>
+
+  <!-- ══════════ LA LISTE ══════════ -->
+  <section class="panel" aria-label="Comptes">
+    <div class="list-head">
+      <div class="chips" id="filterChips" role="tablist">
+        <button class="chip active" data-filter="suspect">Suspects <span class="chip-n" id="nSuspect">–</span></button>
+        <button class="chip" data-filter="mutual">Mutuels <span class="chip-n" id="nMutual">–</span></button>
+        <button class="chip" data-filter="all">Tous <span class="chip-n" id="nAll">–</span></button>
+        <button class="chip" data-filter="removed">Retirés <span class="chip-n" id="nRemoved">–</span></button>
+      </div>
+      <div class="list-tools">
+        <input id="searchInput" class="search" type="search" placeholder="Chercher…" aria-label="Chercher" autocomplete="off" spellcheck="false">
+        <select id="sortSelect" class="select" aria-label="Trier">
+          <option value="recent">Récents</option>
+          <option value="suspicion">Suspects d’abord</option>
+          <option value="alpha">A → Z</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="select-row">
+      <label class="check-line"><input type="checkbox" id="selectAllBox"><span id="selectionInfo">0 compte coché</span></label>
+      <button id="selectSuspectsBtn" class="mini-link">Cocher les suspects</button>
+    </div>
+
+    <div id="followersList" class="rows" aria-live="polite"></div>
+    <p id="emptyState" class="empty hidden">Personne ici — changez de filtre ou importez une liste.</p>
+
+    <details class="import-box">
+      <summary>Importer une liste de pseudos <span class="hint">(l’API TikTok ne la fournit pas)</span></summary>
+      <textarea id="importText" rows="3" placeholder="@pseudo.un&#10;@pseudo.deux"></textarea>
+      <div class="import-actions"><button id="importBtn" class="btn-ghost">Importer</button><span id="importResult" class="hint"></span></div>
+    </details>
+  </section>
+
+  <!-- ══════════ CADENCE : 3 boutons, rien d'autre ══════════ -->
+  <section class="panel cadence" aria-label="Cadence">
+    <div class="cadence-head">
+      <h3>Quelle allure&nbsp;?</h3>
+      <span class="hint">Jamais plus vite que 45&nbsp;s — plafond du jour infranchissable.</span>
+    </div>
+    <div class="cadence-grid" id="profileGrid">
+      <button class="pace" data-profile="calme"><span class="pace-name">Calme</span><span class="pace-desc">2–12 min<br>discret</span></button>
+      <button class="pace active" data-profile="naturel"><span class="pace-name">Naturel</span><span class="pace-desc">1,5–9 min<br>recommandé</span></button>
+      <button class="pace" data-profile="soutenu"><span class="pace-name">Soutenu</span><span class="pace-desc">1–6 min<br>grandes listes</span></button>
+    </div>
+
+    <details class="advanced" id="advancedDetails">
+      <summary>Réglages avancés <span class="hint">plafond du jour, plage horaire, pauses…</span></summary>
+      <div class="adv-grid">
+        <label class="field"><span>Plafond du jour — <output id="dailyCapValue">50</output></span>
+          <input type="range" id="dailyCap" min="1" max="200" step="5" value="50">
+        </label>
+        <label class="field"><span>Hésitations — <output id="hesitationValue">18 %</output></span>
+          <input type="range" id="hesitation" min="0" max="0.6" step="0.02" value="0.18">
+        </label>
+        <label class="field field-row"><span class="field-inline">Plage — début<input type="time" id="dayStart" class="num" value="09:00"></span>
+        <span class="field-inline">fin<input type="time" id="dayEnd" class="num" value="22:30"></span></label>
+        <label class="field"><span>Longue pause tous les — <output id="pauseEveryValue">6</output> gestes</span>
+          <input type="range" id="pauseEvery" min="0" max="20" step="1" value="6">
+        </label>
+      </div>
+      <div class="adv-actions">
+        <button id="saveSettingsBtn" class="btn-primary">Enregistrer</button>
+        <button id="resetDemoBtn" class="btn-danger">Réinitialiser la démo</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- ══════════ JOURNAL (replié) ══════════ -->
+  <details class="panel journal" id="journalDetails">
+    <summary>Journal des gestes <span class="hint" id="journalHint">en direct</span></summary>
+    <ol id="journalList" class="journal-list"></ol>
+    <button id="clearJournalBtn" class="mini-link">Effacer le journal</button>
+  </details>
+
+</main>
+
+<footer class="footer">Sillage — cadence humaine, gestes simulés sans canal d’action. TikTok n’expose aucun endpoint « retirer un abonné » : votre canal autorisé, ou rien.</footer>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
