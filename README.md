@@ -73,3 +73,23 @@ data/     state.json (créé au 1er run, hors Git)
 ## Licence
 
 MIT
+
+## Déployer
+
+### 1) GitHub Pages — déjà en ligne (démo 100 % locale)
+`https://timtvnr.github.io/Tiktok-follower-bot-removal/` — servi depuis l'index racine (`build_type: legacy`, source = branche `arena/9653e4c3-tiktok-follower-bot-removal`, chemin `/`). Toute `git push` sur la branche déclenche un rebuild automatique. C'est la version **statique** : simulation dans le navigateur via `public/demo.js`, données en `localStorage`, aucun serveur, aucun appel réseau. Idéal pour montrer l'app, pas pour agir.
+
+### 2) Render — app complète via Blueprint (HTTPS gratuit)
+Sur [dashboard.render.com](https://dashboard.render.com) → **New → Blueprint** → sélectionnez ce repo GitHub. Render lit `render.yaml`, crée le service web (`npm ci && npm start`), vérifie `/api/status`, et vous donne une URL HTTPS. Renseignez `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` (et `ACTION_GATEWAY_URL` si vous en avez un) dans les variables du service. Zéro config locale : le déploiement se redéclenche à chaque push sur `main`.
+> Plan free : le disque est éphémère — les données de démo et le compteur du jour repartent à zéro à chaque redéploiement. Ajoutez un disque persistant monté sur `/app/data` pour les conserver.
+
+### 3) Docker — n'importe quel hôte
+```bash
+docker build -t sillage .
+docker run -p 3000:3000 --env-file .env sillage
+```
+
+### 4) CI
+`.github/workflows/ci.yml` lance `npm ci && npm test` (node 20 & 22) sur chaque push vers `main` et chaque PR.
+
+> ⚠️ GitHub Pages seul ne peut pas héberger l'app complète : pas de processus Node, pas de SSE, pas d'OAuth. C'est pour cela que la version Pages est un miroir de démonstration.
