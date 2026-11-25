@@ -3,241 +3,138 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sillage — Retirer des followers, un geste à la fois</title>
-<meta name="description" content="Outil de désabonnement manuel assisté : connectez votre compte TikTok, sélectionnez les comptes à retirer, et laissez une cadence humaine — délais en cloche, hésitations, longues pauses, plafond quotidien.">
+<title>Sillage — Retirer des followers, simplement</title>
+<meta name="description" content="Pas de formulaires, pas de jargon : cochez les comptes à retirer, cliquez sur le gros bouton, laissez la cadence humaine faire le reste.">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ccf655'/%3E%3Cpath d='M6 20c5-1 6-8 11-8s8 6 9 6' stroke='%23101208' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='6' cy='20' r='2.6' fill='%23101208'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<div class="app">
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="#ccf655"/>
+      <path d="M6 20c5-1 6-8 11-8s8 6 9 6" stroke="#101208" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      <circle cx="6" cy="20" r="2.6" fill="#101208"/>
+    </svg>
+    <div>
+      <h1>Sillage</h1>
+      <p class="tagline">Retirer des followers, un geste à la fois.</p>
+    </div>
+  </div>
+  <button id="connectionPill" class="connection-pill" title="Lier votre compte TikTok (OAuth officiel)">
+    <span class="dot"></span><span id="connectionText">Vérification…</span><span id="disconnectBtn" class="pill-link hidden">Délier</span>
+  </button>
+</header>
 
-  <!-- ═══ En-tête ═══ -->
-  <header class="topbar">
-    <div class="brand">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="8" fill="#ccf655"/>
-        <path d="M6 20c5-1 6-8 11-8s8 6 9 6" stroke="#101208" stroke-width="2.4" fill="none" stroke-linecap="round"/>
-        <circle cx="6" cy="20" r="2.6" fill="#101208"/>
-      </svg>
-      <div>
-        <h1>Sillage</h1>
-        <p class="tagline">Retirer des followers, un geste à la fois.</p>
+<div id="demoBanner" class="demo-banner"><strong>Mode démo.</strong> Gestes simulés — rien n’est envoyé à TikTok tant qu’un canal d’action n’est pas branché (voir README).</div>
+
+<main class="wrap">
+
+  <!-- ══════════ CARTE PRINCIPALE : l'action ══════════ -->
+  <section class="hero" aria-label="Action principale">
+    <div class="hero-text">
+      <span class="kicker" id="heroKicker">Étape 1 — choisissez les comptes</span>
+      <h2 id="heroTitle">Qui retire-t-on ?</h2>
+      <p id="heroSub" class="hero-sub">Cochez des comptes ci-dessous, ou laissez le bouton « Suspects » faire la pré-sélection.</p>
+      <p class="hero-meta"><span class="today-pill" id="todayPill">Aujourd’hui : 0/50</span><span id="cooldownText" class="cooldown">Geste possible</span></p>
+    </div>
+
+    <div class="hero-action">
+      <div class="ring-wrap" id="ringWrap" aria-hidden="true">
+        <svg class="ring" viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"/>
+        </svg>
+        <div class="ring-center"><span id="ringTimer" class="ring-timer">––:––</span><span id="ringLabel" class="ring-label">en attente</span></div>
+      </div>
+
+      <button id="primaryBtn" class="cta" disabled>
+        <span class="cta-main" id="primaryBtnLabel">Retirer la sélection</span>
+        <span class="cta-sub" id="primaryBtnSub">cochez d’abord des comptes</span>
+      </button>
+      <button id="stopBtn" class="stop hidden">Arrêter la session</button>
+    </div>
+  </section>
+
+  <!-- ══════════ LA LISTE ══════════ -->
+  <section class="panel" aria-label="Comptes">
+    <div class="list-head">
+      <div class="chips" id="filterChips" role="tablist">
+        <button class="chip active" data-filter="suspect">Suspects <span class="chip-n" id="nSuspect">–</span></button>
+        <button class="chip" data-filter="mutual">Mutuels <span class="chip-n" id="nMutual">–</span></button>
+        <button class="chip" data-filter="all">Tous <span class="chip-n" id="nAll">–</span></button>
+        <button class="chip" data-filter="removed">Retirés <span class="chip-n" id="nRemoved">–</span></button>
+      </div>
+      <div class="list-tools">
+        <input id="searchInput" class="search" type="search" placeholder="Chercher…" aria-label="Chercher" autocomplete="off" spellcheck="false">
+        <select id="sortSelect" class="select" aria-label="Trier">
+          <option value="recent">Récents</option>
+          <option value="suspicion">Suspects d’abord</option>
+          <option value="alpha">A → Z</option>
+        </select>
       </div>
     </div>
 
-    <div class="topbar-right">
-      <span id="modeBadge" class="mode-badge demo" title="En l'absence de canal d'action configuré, les gestes sont simulés côté serveur.">DÉMO — gestes simulés</span>
-      <div id="connectionPill" class="connection-pill">
-        <span class="dot"></span><span id="connectionText">Vérification…</span>
-        <button id="disconnectBtn" class="pill-btn hidden" title="Effacer le jeton de la mémoire">Délier</button>
-      </div>
+    <div class="select-row">
+      <label class="check-line"><input type="checkbox" id="selectAllBox"><span id="selectionInfo">0 compte coché</span></label>
+      <button id="selectSuspectsBtn" class="mini-link">Cocher les suspects</button>
     </div>
-  </header>
 
-  <!-- ═══ Bandeau mode démo (masqué si canal réel) ═══ -->
-  <div id="demoBanner" class="demo-banner">
-    <strong>Mode démonstration.</strong> TikTok n'expose aucun endpoint public « retirer un abonné » : sans canal d'action (<code>ACTION_GATEWAY_URL</code>), chaque geste est <em>simulé côté serveur</em>. La cadence, elle, est bien réelle et mesurable.
-  </div>
+    <div id="followersList" class="rows" aria-live="polite"></div>
+    <p id="emptyState" class="empty hidden">Personne ici — changez de filtre ou importez une liste.</p>
 
-  <div class="layout">
-    <main class="main-col">
+    <details class="import-box">
+      <summary>Importer une liste de pseudos <span class="hint">(l’API TikTok ne la fournit pas)</span></summary>
+      <textarea id="importText" rows="3" placeholder="@pseudo.un&#10;@pseudo.deux"></textarea>
+      <div class="import-actions"><button id="importBtn" class="btn-ghost">Importer</button><span id="importResult" class="hint"></span></div>
+    </details>
+  </section>
 
-      <!-- ═══ Onglets ═══ -->
-      <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="followers" role="tab">Abonnés <span id="tabCount" class="tab-count">–</span></button>
-        <button class="tab" data-tab="session" role="tab">Session assistée</button>
-        <button class="tab" data-tab="settings" role="tab">Cadence &amp; réglages</button>
-      </nav>
+  <!-- ══════════ CADENCE : 3 boutons, rien d'autre ══════════ -->
+  <section class="panel cadence" aria-label="Cadence">
+    <div class="cadence-head">
+      <h3>Quelle allure&nbsp;?</h3>
+      <span class="hint">Jamais plus vite que 45&nbsp;s — plafond du jour infranchissable.</span>
+    </div>
+    <div class="cadence-grid" id="profileGrid">
+      <button class="pace" data-profile="calme"><span class="pace-name">Calme</span><span class="pace-desc">2–12 min<br>discret</span></button>
+      <button class="pace active" data-profile="naturel"><span class="pace-name">Naturel</span><span class="pace-desc">1,5–9 min<br>recommandé</span></button>
+      <button class="pace" data-profile="soutenu"><span class="pace-name">Soutenu</span><span class="pace-desc">1–6 min<br>grandes listes</span></button>
+    </div>
 
-      <!-- ══════════ ONGLET ABONNÉS ══════════ -->
-      <section id="tab-followers" class="tab-panel active" role="tabpanel">
-
-        <div class="stats-row" id="statsRow">
-          <div class="stat"><span class="stat-num" id="statActive">–</span><span class="stat-label">à traiter</span></div>
-          <div class="stat"><span class="stat-num" id="statRemoved">–</span><span class="stat-label">retirés</span></div>
-          <div class="stat"><span class="stat-num" id="statSuspect">–</span><span class="stat-label">indice bot élevé</span></div>
-          <div class="stat"><span class="stat-num" id="statToday">–</span><span class="stat-label">aujourd'hui</span></div>
-        </div>
-
-        <div class="toolbar">
-          <div class="search-wrap">
-            <svg viewBox="0 0 20 20" class="search-icon" aria-hidden="true"><circle cx="9" cy="9" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.8 13.8 18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <input id="searchInput" type="text" placeholder="Chercher un pseudo, un nom, une bio…" autocomplete="off" spellcheck="false">
-          </div>
-          <select id="sortSelect" class="select" aria-label="Trier">
-            <option value="recent">Les plus récents d'abord</option>
-            <option value="oldest">Les plus anciens d'abord</option>
-            <option value="alpha">Pseudo (A → Z)</option>
-            <option value="reach">Portée décroissante</option>
-            <option value="suspicion">Indice bot décroissant</option>
-          </select>
-        </div>
-
-        <div class="chips" id="filterChips">
-          <button class="chip active" data-filter="active">À traiter</button>
-          <button class="chip" data-filter="all">Tous</button>
-          <button class="chip" data-filter="mutual">Abonnés mutuels</button>
-          <button class="chip" data-filter="suspect">Suspects (indice élevé)</button>
-          <button class="chip" data-filter="removed">Retirés</button>
-        </div>
-
-        <div class="bulk-bar">
-          <label class="check-line"><input type="checkbox" id="selectAllBox"><span id="selectionInfo">Sélection : 0 cible</span></label>
-          <button id="startFromSelectionBtn" class="btn btn-primary" disabled>Retirer la sélection en session<span class="btn-sub">cadence humaine</span></button>
-        </div>
-
-        <div id="followersList" class="followers-list" aria-live="polite"></div>
-        <p id="emptyState" class="empty-state hidden">Personne ici. Essayez un autre filtre — ou importez vos abonnés ci-dessous.</p>
-
-        <details class="import-panel">
-          <summary>Importer une liste d'abonnés <span class="summary-hint">(l'API TikTok ne la fournit pas — collez vos pseudos)</span></summary>
-          <div class="import-body">
-            <textarea id="importText" rows="4" placeholder="@pseudo.un&#10;@pseudo.deux&#10;pseudo.trois"></textarea>
-            <div class="import-actions">
-              <button id="importBtn" class="btn btn-ghost">Importer</button>
-              <span id="importResult" class="import-result"></span>
-            </div>
-          </div>
-        </details>
-      </section>
-
-      <!-- ══════════ ONGLET SESSION ══════════ -->
-      <section id="tab-session" class="tab-panel" role="tabpanel">
-
-        <div class="session-grid">
-          <div class="card session-card">
-            <div class="session-state-line">
-              <span id="sessionDot" class="session-dot idle"></span>
-              <h2 id="sessionStateLabel" class="session-state-label">En veille</h2>
-            </div>
-
-            <div class="progress-track" aria-hidden="true"><div id="sessionProgress" class="progress-fill" style="width:0%"></div></div>
-            <p class="progress-meta"><span id="sessionDone">0</span> / <span id="sessionTotal">0</span> geste(s) · <span id="sessionLeft">0</span> cible(s) restante(s)</p>
-
-            <div class="next-action">
-              <p class="next-action-label">Prochain geste dans</p>
-              <p id="nextActionTimer" class="next-action-timer">––:––</p>
-              <p id="nextActionKind" class="next-action-kind">en attente de démarrage</p>
-            </div>
-
-            <div class="session-controls">
-              <button id="startSessionBtn" class="btn btn-primary btn-big">Démarrer<small>avec la sélection (<span id="startSelectionCount">0</span> cible(s))</small></button>
-              <button id="pauseSessionBtn" class="btn btn-ghost hidden">Suspendre</button>
-              <button id="resumeSessionBtn" class="btn btn-primary hidden">Reprendre</button>
-              <button id="stopSessionBtn" class="btn btn-danger-ghost hidden">Arrêter</button>
-            </div>
-            <p class="session-hint">La sélection se fait dans l'onglet <button class="linklike" data-goto-tab="followers">Abonnés</button>. Sans sélection, le bouton reste éteint.</p>
-          </div>
-
-          <div class="card plan-card">
-            <div class="plan-head">
-              <h3>Aperçu du rythme</h3>
-              <button id="refreshPlanBtn" class="btn btn-ghost btn-small">Recalculer</button>
-            </div>
-            <ol id="planList" class="plan-list"></ol>
-            <p class="plan-note">Projection locale et indicative — aucun appel réseau, aucun geste tant que la session n'est pas lancée. Les délais sont tirés dans une loi en cloche : jamais réguliers, avec des longues pauses tous les N gestes et des hésitations.</p>
-          </div>
-        </div>
-
-        <div class="card honesty-card">
-          <h3>Ce que fait — et ne fait pas — cette app</h3>
-          <ul>
-            <li><strong>Fait</strong> : lier votre compte TikTok (OAuth officiel
-              <code>user.info.basic</code> + <code>user.info.stats</code>), lire votre profil, planifier et exécuter des gestes de retrait un par un avec une cadence humaine, sous vos garde-fous.</li>
-            <li><strong>Ne fait pas</strong> : appeler un endpoint « remove follower » qui n'existe pas dans l'API publique, gratter des identifiants, utiliser des sessions privées volées ou contourner une mesure de sécurité TikTok.</li>
-            <li><strong>Le geste réel</strong> passe par <code>ACTION_GATEWAY_URL</code>, un canal que <em>vous</em> êtes en droit d'utiliser. Sans lui, tout est simulé et étiqueté comme tel.</li>
-          </ul>
-        </div>
-      </section>
-
-      <!-- ══════════ ONGLET RÉGLAGES ══════════ -->
-      <section id="tab-settings" class="tab-panel" role="tabpanel">
-
-        <div class="card">
-          <h3>Profils de rythme</h3>
-          <div class="profile-grid" id="profileGrid">
-            <button class="profile-card" data-profile="calme"><span class="profile-name">Calme</span><span class="profile-desc">2–12 min entre gestes · longue pause tous les 6 · idéal au quotidien</span></button>
-            <button class="profile-card active" data-profile="naturel"><span class="profile-name">Naturel</span><span class="profile-desc">1,5–9 min · hésitations · longues pauses · le réglage recommandé</span></button>
-            <button class="profile-card" data-profile="soutenu"><span class="profile-name">Soutenu</span><span class="profile-desc">1–6 min · toujours borné · pour les grandes listes, sans trahir la main</span></button>
-          </div>
-
-          <div class="settings-grid">
-            <label class="field">
-              <span class="field-label">Délai min — <output id="minMinutesValue">1,5 min</output></span>
-              <input type="range" id="minMinutes" min="0.75" max="30" step="0.25" value="1.5">
-            </label>
-            <label class="field">
-              <span class="field-label">Délai max — <output id="maxMinutesValue">9 min</output></span>
-              <input type="range" id="maxMinutes" min="1" max="60" step="0.5" value="9">
-            </label>
-            <label class="field">
-              <span class="field-label">Plafond quotidien — <output id="dailyCapValue">50</output> gestes</span>
-              <input type="range" id="dailyCap" min="1" max="200" step="1" value="50">
-              <span class="field-hint">Plancher serveur infranchissable : 200 gestes / jour maximum.</span>
-            </label>
-            <label class="field">
-              <span class="field-label">Hésitations — <output id="hesitationValue">18 %</output></span>
-              <input type="range" id="hesitation" min="0" max="0.6" step="0.02" value="0.18">
-              <span class="field-hint">Probabilité de reporter une cible plutôt que de cliquer — comme une vraie main qui hésite.</span>
-            </label>
-            <label class="field">
-              <span class="field-label">Longue pause tous les — <output id="pauseEveryValue">6</output> gestes</span>
-              <input type="range" id="pauseEvery" min="0" max="20" step="1" value="6">
-              <span class="field-hint">0 = jamais. Sinon, pause aléatoire en plus du délai habituel.</span>
-            </label>
-            <div class="field field-row">
-              <label class="field-inline"><span class="field-label">Longue pause min (min)</span><input type="number" id="longPauseMin" class="number-input" min="1" max="120" step="1" value="7"></label>
-              <label class="field-inline"><span class="field-label">max (min)</span><input type="number" id="longPauseMax" class="number-input" min="1" max="180" step="1" value="14"></label>
-            </div>
-            <div class="field field-row">
-              <label class="field-inline"><span class="field-label">Plage — début</span><input type="time" id="dayStart" class="number-input" value="09:00"></label>
-              <label class="field-inline"><span class="field-label">fin</span><input type="time" id="dayEnd" class="number-input" value="22:30"></label>
-            </div>
-          </div>
-
-          <div class="settings-actions">
-            <button id="saveSettingsBtn" class="btn btn-primary">Enregistrer la cadence</button>
-            <button id="resetDemoBtn" class="btn btn-danger-ghost">Réinitialiser les données de démo</button>
-          </div>
-          <p class="settings-note">Hors de la plage d'activité, la session se met en pause toute seule et reprend à l'ouverture. L'intervalle minimum de 45 s entre gestes est appliqué côté serveur, quels que soient les curseurs.</p>
-        </div>
-
-        <div class="card honesty-card">
-          <h3>Cadre &amp; limites</h3>
-          <ul>
-            <li>TikTok n'offre <strong>aucun endpoint public</strong> pour retirer un abonné au nom du titulaire du compte. Votre app est donc un planificateur + exécutant, pas un piratage : le geste réel passe par votre canal autorisé ou reste simulé.</li>
-            <li>Automatiser des actions peut enfreindre les CGU TikTok. Cette app reste volontairement lente, bornée et honnête — retirez en priorité les comptes que vous avez vous-même qualifiés (indice bot, inactifs, hors cible).</li>
-            <li>Le désabonnement en masse pour gonfler des métriques ou harceler n'est pas le propos de cet outil.</li>
-          </ul>
-        </div>
-      </section>
-    </main>
-
-    <!-- ═══ Rail droit : statut du jour + journal ═══ -->
-    <aside class="side-col">
-      <div class="card today-card">
-        <h3>Aujourd'hui</h3>
-        <div class="today-big"><span id="todayCount">0</span><span class="today-cap">/ <span id="todayCap">50</span> gestes</span></div>
-        <div class="progress-track slim"><div id="todayProgress" class="progress-fill" style="width:0%"></div></div>
-        <p class="today-meta">Dernier geste : <span id="lastActionAgo">jamais</span></p>
-        <p class="today-meta" id="cooldownLine">Prochain geste manuel : possible maintenant</p>
+    <details class="advanced" id="advancedDetails">
+      <summary>Réglages avancés <span class="hint">plafond du jour, plage horaire, pauses…</span></summary>
+      <div class="adv-grid">
+        <label class="field"><span>Plafond du jour — <output id="dailyCapValue">50</output></span>
+          <input type="range" id="dailyCap" min="1" max="200" step="5" value="50">
+        </label>
+        <label class="field"><span>Hésitations — <output id="hesitationValue">18 %</output></span>
+          <input type="range" id="hesitation" min="0" max="0.6" step="0.02" value="0.18">
+        </label>
+        <label class="field field-row"><span class="field-inline">Plage — début<input type="time" id="dayStart" class="num" value="09:00"></span>
+        <span class="field-inline">fin<input type="time" id="dayEnd" class="num" value="22:30"></span></label>
+        <label class="field"><span>Longue pause tous les — <output id="pauseEveryValue">6</output> gestes</span>
+          <input type="range" id="pauseEvery" min="0" max="20" step="1" value="6">
+        </label>
       </div>
-
-      <div class="card journal-card">
-        <div class="journal-head">
-          <h3>Journal</h3>
-          <button id="clearJournalBtn" class="btn btn-ghost btn-small">Effacer</button>
-        </div>
-        <ol id="journalList" class="journal-list"></ol>
+      <div class="adv-actions">
+        <button id="saveSettingsBtn" class="btn-primary">Enregistrer</button>
+        <button id="resetDemoBtn" class="btn-danger">Réinitialiser la démo</button>
       </div>
-    </aside>
-  </div>
+    </details>
+  </section>
 
-  <footer class="footer">
-    Sillage — planification locale, cadence réelle, gestes simulés tant qu'aucun canal d'action n'est branché. Aucune donnée ne part vers TikTok sans votre OAuth et votre canal.
-  </footer>
-</div>
+  <!-- ══════════ JOURNAL (replié) ══════════ -->
+  <details class="panel journal" id="journalDetails">
+    <summary>Journal des gestes <span class="hint" id="journalHint">en direct</span></summary>
+    <ol id="journalList" class="journal-list"></ol>
+    <button id="clearJournalBtn" class="mini-link">Effacer le journal</button>
+  </details>
+
+</main>
+
+<footer class="footer">Sillage — cadence humaine, gestes simulés sans canal d’action. TikTok n’expose aucun endpoint « retirer un abonné » : votre canal autorisé, ou rien.</footer>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="app.js"></script>

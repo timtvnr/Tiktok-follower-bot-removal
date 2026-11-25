@@ -1,25 +1,16 @@
-/* Sillage — logique client. Aucune dépendance, aucun secret côté navigateur. */
+/* Sillage — interface simple : choisir, cliquer, laisser faire. */
 'use strict';
 
-/* ─── utilitaires ─────────────────────────────────────────── */
-const $ = (sel, root) => (root || document).querySelector(sel);
-const $$ = (sel, root) => [...(root || document).querySelectorAll(sel)];
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtNum = (n) => Number(n || 0).toLocaleString('fr-FR');
 
 async function api(path, options) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
   let data = null;
-  try { data = await res.json(); } catch { /* réponse non JSON */ }
-  if (!res.ok) {
-    const err = new Error((data && data.error) || ('Erreur HTTP ' + res.status));
-    err.status = res.status;
-    err.payload = data;
-    throw err;
-  }
+  try { data = await res.json(); } catch { /* non JSON */ }
+  if (!res.ok) { const e = new Error((data && data.error) || 'Erreur ' + res.status); e.status = res.status; e.payload = data; throw e; }
   return data;
 }
 
@@ -28,520 +19,423 @@ function toast(message, kind) {
   el.className = 'toast ' + (kind || '');
   el.textContent = message;
   $('#toasts').appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4200);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4000);
 }
 
-function fmtCountdown(ms) {
-  if (ms == null || ms < 0) ms = 0;
-  const totalSec = Math.ceil(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return h + ' h ' + String(m).padStart(2, '0') + ' min';
-  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-}
+const fmtCountdown = (ms) => {
+  const s = Math.max(0, Math.ceil((ms || 0) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return h ? h + ' h ' + String(m).padStart(2, '0') : String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+};
+const fmtAgo = (ts) => {
+  if (!ts) return null;
+  const d = Date.now() - ts;
+  if (d < 45000) return 'à l’instant';
+  const m = Math.floor(d / 60000);
+  return m < 60 ? 'il y a ' + m + ' min' : 'il y a ' + Math.floor(m / 60) + ' h';
+};
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtTime = (d) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-function fmtAgo(ts) {
-  if (!ts) return 'jamais';
-  const diff = Date.now() - ts;
-  if (diff < 45 * 1000) return 'à l’instant';
-  const min = Math.floor(diff / 60000);
-  if (min < 60) return 'il y a ' + min + ' min';
-  const h = Math.floor(min / 60);
-  if (h < 48) return 'il y a ' + h + ' h';
-  return 'il y a ' + Math.floor(h / 24) + ' j';
-}
-
-function fmtPlanTime(iso) {
-  const d = new Date(iso);
-  const now = new Date();
-  const dayKey = (x) => x.getFullYear() + '-' + x.getMonth() + '-' + x.getDate();
-  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-  const hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  if (dayKey(d) === dayKey(now)) return 'aujourd’hui · ' + hm;
-  if (dayKey(d) === dayKey(tomorrow)) return 'demain · ' + hm;
-  return d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) + ' · ' + hm;
-}
-
-/* ─── état client ─────────────────────────────────────────── */
+/* ─── état ─── */
 const state = {
-  q: '',
-  filter: 'active',
+  all: [],          // toutes les cibles (y compris retirées)
+  filter: 'suspect',
   sort: 'recent',
+  q: '',
   selected: new Set(),
-  currentIds: [],
   status: null,
-  plan: [],
 };
 
-/* ─── onglets ─────────────────────────────────────────────── */
-function gotoTab(name) {
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  $$('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
-}
-$$('.tab').forEach(t => t.addEventListener('click', () => gotoTab(t.dataset.tab)));
-$$('[data-goto-tab]').forEach(b => b.addEventListener('click', () => gotoTab(b.dataset.gotoTab)));
-
-/* ─── suivi temps réel ────────────────────────────────────── */
-async function refreshStatus() {
-  try {
-    state.status = await api('/api/status');
-  } catch (err) {
-    console.warn('status échoué', err);
-    return;
+const isActive = f => f.status === 'active';
+const isSuspect = f => f.botHint === 'élevé';
+const visible = () => {
+  let list = state.all.slice();
+  if (state.filter === 'suspect') list = list.filter(f => isActive(f) && isSuspect(f));
+  else if (state.filter === 'mutual') list = list.filter(f => isActive(f) && f.mutual);
+  else if (state.filter === 'removed') list = list.filter(f => f.status === 'removed');
+  if (state.q) {
+    const q = state.q.toLowerCase();
+    list = list.filter(f => (f.handle + ' ' + (f.name || '') + ' ' + (f.bio || '')).toLowerCase().includes(q));
   }
-  renderStatus();
-}
+  const rank = { 'élevé': 0, 'moyen': 1, 'faible': 2 };
+  if (state.sort === 'suspicion') list.sort((a, b) => (rank[a.botHint] ?? 3) - (rank[b.botHint] ?? 3));
+  else if (state.sort === 'alpha') list.sort((a, b) => a.handle.localeCompare(b.handle));
+  else list.sort((a, b) => new Date(b.followedAt) - new Date(a.followedAt));
+  return list;
+};
+const counts = () => ({
+  suspect: state.all.filter(f => isActive(f) && isSuspect(f)).length,
+  mutual: state.all.filter(f => isActive(f) && f.mutual).length,
+  all: state.all.length,
+  removed: state.all.filter(f => f.status === 'removed').length,
+});
 
-function renderStatus() {
-  const s = state.status;
-  if (!s) return;
-
-  // Badge mode
-  const modeBadge = $('#modeBadge');
-  if (s.mode === 'gateway') {
-    modeBadge.textContent = 'CANAL D’ACTION RÉEL';
-    modeBadge.className = 'mode-badge live';
-    $('#demoBanner').classList.add('hidden');
-  } else {
-    modeBadge.textContent = 'DÉMO — gestes simulés';
-    modeBadge.className = 'mode-badge demo';
-    $('#demoBanner').classList.remove('hidden');
-  }
-
-  // Pilule de connexion
-  const pill = $('#connectionPill');
-  const conn = s.connection || {};
-  if (conn.connected) {
-    pill.classList.add('connected');
-    $('#connectionText').textContent = (conn.displayName || 'Compte lié') + (conn.followerCount != null ? ' · ' + fmtNum(conn.followerCount) + ' abonnés' : '');
-    $('#disconnectBtn').classList.remove('hidden');
-  } else {
-    pill.classList.remove('connected');
-    $('#connectionText').textContent = conn.configured ? 'TikTok non lié — cliquer pour lier' : 'OAuth non configuré (démo)';
-    $('#disconnectBtn').classList.add('hidden');
-  }
-
-  // Carte « Aujourd'hui »
-  $('#todayCount').textContent = s.daily.count;
-  $('#todayCap').textContent = s.daily.cap;
-  $('#todayProgress').style.width = Math.min(100, (s.daily.count / s.daily.cap) * 100) + '%';
-  $('#lastActionAgo').textContent = fmtAgo(s.lastActionAt);
-  $('#statToday').textContent = s.daily.count;
-
-  // Ligne de refroidissement manuel
-  const cd = $('#cooldownLine');
-  if (!s.canAct.ok) {
-    if (s.canAct.code === 'cooldown') cd.textContent = 'Prochain geste manuel : encore ' + Math.ceil((s.canAct.retryAfterMs || 0) / 1000) + ' s';
-    else if (s.canAct.code === 'daily_cap') cd.textContent = 'Plafond quotidien atteint — à demain';
-    else if (s.canAct.code === 'outside_hours') cd.textContent = 'Hors plage d’activité — reprise à l’ouverture';
-    else cd.textContent = s.canAct.reason || 'Indisponible';
-  } else {
-    cd.textContent = 'Prochain geste manuel : possible maintenant';
-    cd.style.color = '';
-  }
-
-  // Boutons « Retirer » : éteints pendant le refroidissement
-  $$('.remove-btn').forEach(btn => { btn.disabled = !s.canAct.ok; btn.title = s.canAct.ok ? 'Retirer ce compte, comme au doigt' : (s.canAct.reason || ''); });
-
-  // Session assistée
-  const eng = s.engine;
-  const stateLabels = { idle: 'En veille', running: 'Session en cours', paused: 'Session en pause' };
-  $('#sessionStateLabel').textContent = stateLabels[eng.state] || eng.state;
-  $('#sessionDot').className = 'session-dot ' + eng.state;
-  $('#sessionDone').textContent = eng.done;
-  $('#sessionTotal').textContent = eng.targetsTotal;
-  $('#sessionLeft').textContent = eng.queueLength;
-  $('#sessionProgress').style.width = eng.targetsTotal ? ((eng.done / eng.targetsTotal) * 100) + '%' : '0%';
-
-  $('#startSessionBtn').classList.toggle('hidden', eng.state !== 'idle');
-  $('#pauseSessionBtn').classList.toggle('hidden', eng.state !== 'running');
-  $('#resumeSessionBtn').classList.toggle('hidden', eng.state !== 'paused');
-  $('#stopSessionBtn').classList.toggle('hidden', eng.state === 'idle');
-  $('#startSessionBtn').disabled = eng.state === 'idle' && state.selected.size === 0;
-  $('#startSelectionCount').textContent = state.selected.size;
-}
-
-/* ─── liste des followers ─────────────────────────────────── */
-function escapeAttr(s) { return esc(s); }
-
+/* ─── chargement & rendu de la liste ─── */
 async function loadFollowers() {
-  const params = new URLSearchParams({ q: state.q, filter: state.filter, sort: state.sort });
   try {
-    const data = await api('/api/followers?' + params.toString());
-    renderFollowers(data.followers || []);
+    const data = await api('/api/followers?filter=all&sort=recent&q=');
+    state.all = data.followers || [];
+    // purge la sélection des comptes devenus inactifs/retirés
+    const activeIds = new Set(state.all.filter(isActive).map(f => f.id));
+    for (const id of [...state.selected]) if (!activeIds.has(id)) state.selected.delete(id);
+    renderAll();
   } catch (err) {
-    toast('Impossible de charger la liste : ' + err.message, 'error');
+    toast('Liste illisible : ' + err.message, 'error');
   }
 }
 
-function renderFollowers(list) {
-  state.currentIds = list.map(f => f.id);
-  const wrap = $('#followersList');
+function renderAll() {
+  const c = counts();
+  $('#nSuspect').textContent = c.suspect;
+  $('#nMutual').textContent = c.mutual;
+  $('#nAll').textContent = c.all;
+  $('#nRemoved').textContent = c.removed;
+
+  const list = visible();
   $('#emptyState').classList.toggle('hidden', list.length > 0);
 
-  wrap.innerHTML = list.map(f => {
+  $('#followersList').innerHTML = list.map(f => {
     const removed = f.status === 'removed';
-    const bot = f.botHint === 'élevé'
-      ? '<span class="badge bot-high">indice bot élevé</span>'
-      : (f.botHint === 'moyen' ? '<span class="badge bot-mid">indice bot moyen</span>' : '');
-    const mutual = f.mutual ? '<span class="badge mutual">mutuel</span>' : '';
-    const src = f.source === 'import' ? '<span class="badge src">importé</span>' : '<span class="badge src">démo</span>';
-    const followed = new Date(f.followedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
-    const checked = state.selected.has(f.id) ? ' checked' : '';
-    const actionBtn = removed
-      ? '<button class="btn btn-ghost remove-btn" data-restore="' + esc(f.id) + '">Restaurer</button>'
-      : '<button class="btn btn-danger-ghost remove-btn" data-remove="' + esc(f.id) + '">Retirer</button>';
-    const removedBadge = removed ? '<span class="badge removed-badge">retiré</span>' : '';
+    const checked = state.selected.has(f.id);
+    const reason = isSuspect(f)
+      ? '<b>⚠ suspect</b> · suit ' + fmtNum(f.followingCount) + ' / suivi par ' + fmtNum(f.followersCount)
+      : (f.mutual ? 'mutuel · suivi depuis le ' + fmtDate(f.followedAt) : 'suivi depuis le ' + fmtDate(f.followedAt));
     return (
-      '<div class="follower-row' + (removed ? ' removed' : '') + '" data-id="' + esc(f.id) + '">' +
-        '<input type="checkbox" class="row-check" data-id="' + esc(f.id) + '" aria-label="Sélectionner ' + escapeAttr(f.handle) + '"' + (removed ? ' disabled' : '') + checked + '>' +
+      '<div class="row' + (removed ? ' removed' : '') + (checked ? ' checked' : '') + '" data-id="' + esc(f.id) + '">' +
+        (removed
+          ? '<span></span>'
+          : '<input type="checkbox" class="row-check" data-id="' + esc(f.id) + '" aria-label="Cocher ' + esc(f.handle) + '"' + (checked ? ' checked' : '') + '>') +
         '<div class="avatar" style="--hue:' + Number(f.hue || 0) + '">' + esc(f.initials || '?') + '</div>' +
-        '<div class="follower-meta">' +
-          '<div class="follower-top"><span class="follower-handle">' + esc(f.handle) + '</span>' +
-            '<span class="follower-name">' + esc(f.name || '') + '</span>' + mutual + bot + src + removedBadge + '</div>' +
-          (f.bio ? '<div class="follower-bio">' + esc(f.bio) + '</div>' : '') +
-          '<div class="follower-foot"><span>suivi depuis le ' + esc(followed) + '</span><span>' + fmtNum(f.followersCount) + ' abonnés</span><span>suit ' + fmtNum(f.followingCount) + '</span></div>' +
+        '<div class="row-meta">' +
+          '<div class="row-top"><span class="row-handle">' + esc(f.handle) + '</span><span class="row-name">' + esc(f.name || '') + '</span></div>' +
+          '<div class="row-reason">' + reason + '</div>' +
         '</div>' +
-        actionBtn +
+        (removed
+          ? '<button class="row-action restore" data-restore="' + esc(f.id) + '">↩ Restaurer</button>'
+          : '<button class="row-action" data-remove="' + esc(f.id) + '">Retirer</button>') +
       '</div>'
     );
   }).join('');
 
-  // Délégation d'événements
-  $$('.row-check', wrap).forEach(cb => cb.addEventListener('change', () => {
-    if (cb.checked) state.selected.add(cb.dataset.id); else state.selected.delete(cb.dataset.id);
-    updateSelectionUI();
+  // Interactions : la rangée entière bascule la case (sauf bouton)
+  $$('.row', $('#followersList')).forEach(row => row.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    const cb = $('.row-check', row); if (!cb) return;
+    cb.checked = !cb.checked;
+    toggleSelect(cb.dataset.id, cb.checked, row);
   }));
-  $$('[data-remove]', wrap).forEach(btn => btn.addEventListener('click', () => removeFollower(btn.dataset.remove, btn)));
-  $$('[data-restore]', wrap).forEach(btn => btn.addEventListener('click', () => restoreFollower(btn.dataset.restore)));
+  $$('.row-check', $('#followersList')).forEach(cb => cb.addEventListener('change', () => toggleSelect(cb.dataset.id, cb.checked, cb.closest('.row'))));
+  $$('[data-remove]', $('#followersList')).forEach(b => b.addEventListener('click', () => removeOne(b.dataset.remove, b)));
+  $$('[data-restore]', $('#followersList')).forEach(b => b.addEventListener('click', () => restoreOne(b.dataset.restore)));
 
   updateSelectionUI();
-  updateStats();
-  renderStatus(); // re-applique l'état des boutons Retirer
+  renderStatus();
+}
+
+function toggleSelect(id, on, row) {
+  if (on) state.selected.add(id); else state.selected.delete(id);
+  if (row) row.classList.toggle('checked', on);
+  updateSelectionUI();
 }
 
 function updateSelectionUI() {
-  const info = $('#selectionInfo');
-  info.textContent = 'Sélection : ' + state.selected.size + ' cible' + (state.selected.size > 1 ? 's' : '');
-  $('#startFromSelectionBtn').disabled = state.selected.size === 0;
-  $('#startSelectionCount').textContent = state.selected.size;
+  const n = state.selected.size;
+  $('#selectionInfo').textContent = n + (n > 1 ? ' comptes cochés' : ' compte coché');
+  const visibleIds = visible().filter(isActive).map(f => f.id);
+  const checkedVisible = visibleIds.filter(id => state.selected.has(id)).length;
   const all = $('#selectAllBox');
-  const selectable = state.currentIds.filter(id => {
-    const row = $('.follower-row[data-id="' + id + '"] .row-check');
-    return row && !row.disabled;
-  });
-  const checkedCount = selectable.filter(id => state.selected.has(id)).length;
-  all.checked = selectable.length > 0 && checkedCount === selectable.length;
-  all.indeterminate = checkedCount > 0 && checkedCount < selectable.length;
-}
-
-async function updateStats() {
-  try {
-    const [active, removed, suspect] = await Promise.all([
-      api('/api/followers?filter=active'),
-      api('/api/followers?filter=removed'),
-      api('/api/followers?filter=suspect'),
-    ]);
-    $('#statActive').textContent = active.total;
-    $('#statRemoved').textContent = removed.total;
-    $('#statSuspect').textContent = suspect.total;
-    $('#tabCount').textContent = active.total;
-  } catch { /* silencieux */ }
+  all.checked = visibleIds.length > 0 && checkedVisible === visibleIds.length;
+  all.indeterminate = checkedVisible > 0 && checkedVisible < visibleIds.length;
+  renderPrimary();
 }
 
 $('#selectAllBox').addEventListener('change', (e) => {
-  const checked = e.target.checked;
-  $$('.row-check').forEach(cb => {
-    if (cb.disabled) return;
-    cb.checked = checked;
-    if (checked) state.selected.add(cb.dataset.id); else state.selected.delete(cb.dataset.id);
+  const on = e.target.checked;
+  $$('.row-check', $('#followersList')).forEach(cb => {
+    cb.checked = on;
+    const row = cb.closest('.row');
+    if (on) state.selected.add(cb.dataset.id); else state.selected.delete(cb.dataset.id);
+    if (row) row.classList.toggle('checked', on);
   });
   updateSelectionUI();
 });
-
-// Recherche débouncée + tri + filtres
-let searchTimer = null;
-$('#searchInput').addEventListener('input', (e) => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); loadFollowers(); }, 160);
+$('#selectSuspectsBtn').addEventListener('click', () => {
+  state.all.filter(f => isActive(f) && isSuspect(f)).forEach(f => state.selected.add(f.id));
+  renderAll();
+  toast('Suspects cochés — vérifiez, puis cliquez sur le gros bouton.', 'success');
 });
-$('#sortSelect').addEventListener('change', (e) => { state.sort = e.target.value; loadFollowers(); });
 $('#filterChips').addEventListener('click', (e) => {
   const btn = e.target.closest('.chip'); if (!btn) return;
   state.filter = btn.dataset.filter;
   $$('#filterChips .chip').forEach(c => c.classList.toggle('active', c === btn));
-  loadFollowers();
+  renderAll();
 });
+let searchT = null;
+$('#searchInput').addEventListener('input', (e) => { clearTimeout(searchT); searchT = setTimeout(() => { state.q = e.target.value.trim(); renderAll(); }, 150); });
+$('#sortSelect').addEventListener('change', (e) => { state.sort = e.target.value; renderAll(); });
 
-async function removeFollower(id, btn) {
+async function removeOne(id, btn) {
   if (btn) btn.disabled = true;
   try {
     await api('/api/followers/' + encodeURIComponent(id) + '/remove', { method: 'POST' });
     state.selected.delete(id);
-    toast('Geste enregistré — comme au doigt.', 'success');
+    toast('Geste enregistré.', 'success');
     await Promise.all([loadFollowers(), refreshStatus()]);
   } catch (err) {
     toast(err.message, 'error');
-    await refreshStatus(); // re-synchronise les boutons
     if (btn) btn.disabled = false;
+    refreshStatus();
   }
 }
-
-async function restoreFollower(id) {
-  try {
-    await api('/api/followers/' + encodeURIComponent(id) + '/restore', { method: 'POST' });
-    toast('Compte restauré dans la liste.', 'success');
-    await loadFollowers();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+async function restoreOne(id) {
+  try { await api('/api/followers/' + encodeURIComponent(id) + '/restore', { method: 'POST' }); await loadFollowers(); }
+  catch (err) { toast(err.message, 'error'); }
 }
 
 $('#importBtn').addEventListener('click', async () => {
-  const text = $('#importText').value;
-  $('#importResult').textContent = '';
   try {
-    const out = await api('/api/import', { method: 'POST', body: JSON.stringify({ text }) });
-    $('#importResult').textContent = out.imported + ' importé(s), ' + out.skipped + ' ignoré(s)/doublon(s).';
+    const out = await api('/api/import', { method: 'POST', body: JSON.stringify({ text: $('#importText').value }) });
+    $('#importResult').textContent = out.imported + ' importé(s), ' + out.skipped + ' ignoré(s).';
     $('#importText').value = '';
     await loadFollowers();
-  } catch (err) {
-    $('#importResult').textContent = err.message;
-  }
+  } catch (err) { $('#importResult').textContent = err.message; }
 });
 
-/* ─── session assistée ────────────────────────────────────── */
-$('#startFromSelectionBtn').addEventListener('click', async () => {
-  const ids = [...state.selected];
-  if (!ids.length) return;
-  try {
-    await api('/api/session/start', { method: 'POST', body: JSON.stringify({ ids }) });
-    toast('Session démarrée — à rythme humain.', 'success');
-    state.selected.clear();
-    gotoTab('session');
-    await Promise.all([loadFollowers(), refreshStatus()]);
-  } catch (err) {
-    toast(err.message, 'error');
+/* ─── statut temps réel ─── */
+async function refreshStatus() {
+  try { state.status = await api('/api/status'); } catch { return; }
+  renderStatus();
+}
+
+function renderStatus() {
+  const s = state.status; if (!s) return;
+  const conn = s.connection || {};
+
+  const pill = $('#connectionPill');
+  pill.classList.toggle('connected', !!conn.connected);
+  $('#disconnectBtn').classList.toggle('hidden', !conn.connected);
+  $('#connectionText').textContent = conn.connected
+    ? (conn.displayName || 'Compte lié') + (conn.followerCount != null ? ' · ' + fmtNum(conn.followerCount) + ' abonnés' : '')
+    : (conn.configured ? 'Lier mon compte TikTok' : 'Mode démo (OAuth non configuré)');
+
+  $('#demoBanner').classList.toggle('hidden', s.mode === 'gateway');
+  $('#todayPill').textContent = 'Aujourd’hui : ' + s.daily.count + '/' + s.daily.cap;
+
+  // Refroidissement / plafond / plage
+  const cd = $('#cooldownText');
+  if (!s.canAct.ok) {
+    cd.classList.add('waiting');
+    if (s.canAct.code === 'cooldown') cd.textContent = 'Prochain geste possible dans ' + Math.ceil((s.canAct.retryAfterMs || 0) / 1000) + ' s';
+    else if (s.canAct.code === 'daily_cap') cd.textContent = 'Plafond du jour atteint — à demain';
+    else cd.textContent = 'Hors plage d’activité — reprise à l’ouverture';
+  } else {
+    cd.classList.remove('waiting');
+    cd.textContent = 'Geste possible maintenant';
   }
+
+  // Boutons « Retirer » des lignes
+  $$('[data-remove]').forEach(b => { b.disabled = !s.canAct.ok; });
+
+  renderPrimary();
+}
+
+function renderPrimary() {
+  const s = state.status;
+  const btn = $('#primaryBtn'), stop = $('#stopBtn');
+  const label = $('#primaryBtnLabel'), sub = $('#primaryBtnSub');
+  const kicker = $('#heroKicker'), title = $('#heroTitle'), heroSub = $('#heroSub');
+  const n = state.selected.size;
+  const eng = s && s.engine;
+
+  stop.classList.toggle('hidden', !eng || eng.state === 'idle');
+
+  if (eng && eng.state === 'running') {
+    kicker.textContent = 'Étape 2 — retrait en cours';
+    title.textContent = 'On y va, doucement';
+    heroSub.textContent = eng.queueLength + ' cible(s) restante(s) — pause automatique hors plage, plafond du jour respecté.';
+    label.textContent = 'Suspendre';
+    sub.textContent = 'la session tourne — touchez pour souffler';
+    btn.disabled = false;
+    btn.dataset.mode = 'pause';
+  } else if (eng && eng.state === 'paused') {
+    kicker.textContent = 'Session en pause';
+    title.textContent = 'On attend votre feu vert';
+    heroSub.textContent = 'Suspendue par vous — rien ne bouge tant que vous ne reprenez pas.';
+    label.textContent = 'Reprendre';
+    sub.textContent = 'dernière cible dans la file, on repart';
+    btn.disabled = false;
+    btn.dataset.mode = 'resume';
+  } else {
+    kicker.textContent = 'Étape 1 — choisissez les comptes';
+    title.textContent = n ? 'On retire ' + n + ' compte' + (n > 1 ? 's' : '') + ' ?' : 'Qui retire-t-on ?';
+    heroSub.textContent = n
+      ? 'Le gros bouton lance une session à cadence humaine : délais en cloche, pauses, hésitations — vous gardez la main à chaque instant.'
+      : 'Cochez ci-dessous — ou « Cocher les suspects » pour pré-sélectionner les comptes douteux.';
+    label.textContent = 'Retirer la sélection';
+    sub.textContent = n ? n + ' compte' + (n > 1 ? 's' : '') + ' coché' + (n > 1 ? 's' : '') : 'cochez d’abord des comptes';
+    btn.disabled = n === 0;
+    btn.dataset.mode = 'start';
+  }
+}
+
+$('#primaryBtn').addEventListener('click', async () => {
+  const mode = $('#primaryBtn').dataset.mode || 'start';
+  try {
+    if (mode === 'pause') { await api('/api/session/pause', { method: 'POST' }); }
+    else if (mode === 'resume') { await api('/api/session/resume', { method: 'POST' }); }
+    else {
+      const ids = [...state.selected];
+      if (!ids.length) return;
+      await api('/api/session/start', { method: 'POST', body: JSON.stringify({ ids }) });
+      state.selected.clear();
+      toast('Session démarrée — à rythme humain.', 'success');
+      await loadFollowers();
+    }
+    await refreshStatus();
+  } catch (err) { toast(err.message, 'error'); refreshStatus(); }
+});
+$('#stopBtn').addEventListener('click', async () => {
+  try { await api('/api/session/stop', { method: 'POST' }); toast('Session arrêtée.', 'success'); await refreshStatus(); }
+  catch (err) { toast(err.message, 'error'); }
 });
 
-$('#startSessionBtn').addEventListener('click', async () => {
-  const ids = [...state.selected];
-  if (!ids.length) { toast('Sélectionnez des cibles dans l’onglet Abonnés.', 'error'); return; }
-  try {
-    await api('/api/session/start', { method: 'POST', body: JSON.stringify({ ids }) });
-    state.selected.clear();
-    toast('Session démarrée.', 'success');
-    await Promise.all([loadFollowers(), refreshStatus()]);
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-});
+/* ─── anneau de progression ─── */
+const RING_C = 2 * Math.PI * 52; // r = 52
+$('#ringFg').style.strokeDasharray = RING_C.toFixed(1);
 
-$('#pauseSessionBtn').addEventListener('click', () => api('/api/session/pause', { method: 'POST' }).then(refreshStatus).catch(e => toast(e.message, 'error')));
-$('#resumeSessionBtn').addEventListener('click', () => api('/api/session/resume', { method: 'POST' }).then(refreshStatus).catch(e => toast(e.message, 'error')));
-$('#stopSessionBtn').addEventListener('click', () => api('/api/session/stop', { method: 'POST' }).then(refreshStatus).catch(e => toast(e.message, 'error')));
-
-/* ─── aperçu du plan ──────────────────────────────────────── */
-async function loadPlan() {
-  try {
-    const data = await api('/api/plan?n=12');
-    state.plan = data.plan || [];
-    $('#planList').innerHTML = state.plan.map(p => (
-      '<li class="plan-item' + (p.longPause ? ' long-pause' : '') + '">' +
-        '<span class="plan-idx">' + p.index + '</span>' +
-        '<span class="plan-time">' + esc(fmtPlanTime(p.at)) + '</span>' +
-        (p.longPause ? '<span class="plan-tag">longue pause</span>' : '') +
-      '</li>'
-    )).join('');
-  } catch (err) {
-    $('#planList').innerHTML = '<li class="plan-item"><span class="plan-time">Projection indisponible : ' + esc(err.message) + '</span></li>';
+function renderRing() {
+  const s = state.status; if (!s) return;
+  const eng = s.engine;
+  const timer = $('#ringTimer'), label = $('#ringLabel'), fg = $('#ringFg');
+  if (eng.state === 'running' || eng.state === 'paused') {
+    if (eng.targetsTotal > 0) {
+      const frac = eng.done / eng.targetsTotal;
+      fg.style.strokeDashoffset = (RING_C * (1 - frac)).toFixed(1);
+    }
+    if (eng.state === 'running' && eng.nextAt) {
+      timer.textContent = fmtCountdown(eng.nextAt - Date.now());
+      label.textContent = eng.nextLabel || 'geste';
+    } else {
+      timer.textContent = '––:––';
+      label.textContent = 'en pause';
+    }
+  } else {
+    fg.style.strokeDashoffset = RING_C.toFixed(1);
+    timer.textContent = '––:––';
+    label.textContent = 'en attente';
   }
 }
-$('#refreshPlanBtn').addEventListener('click', loadPlan);
 
-/* ─── réglages ────────────────────────────────────────────── */
-const PROFILE_PRESETS = { calme: true, naturel: true, soutenu: true };
-let settingsDirty = false;
-
-function fmtMin(v) { return String(Math.round(v * 100) / 100).replace('.', ',') + ' min'; }
-
-function bindRange(id, outId, fmt) {
-  const input = $('#' + id), out = $('#' + outId);
-  const render = () => { out.textContent = fmt(Number(input.value)); };
-  input.addEventListener('input', () => { render(); markCustom(); });
-  render();
-}
-bindRange('minMinutes', 'minMinutesValue', v => fmtMin(v));
-bindRange('maxMinutes', 'maxMinutesValue', v => fmtMin(v));
-bindRange('dailyCap', 'dailyCapValue', v => String(Math.round(v)));
-bindRange('hesitation', 'hesitationValue', v => Math.round(v * 100) + ' %');
-bindRange('pauseEvery', 'pauseEveryValue', v => v === 0 ? 'jamais' : String(Math.round(v)));
-
-function markCustom() {
-  settingsDirty = true;
-  $$('#profileGrid .profile-card').forEach(c => c.classList.remove('active'));
-}
-
+/* ─── cadence : 3 boutons ─── */
 $('#profileGrid').addEventListener('click', async (e) => {
-  const card = e.target.closest('.profile-card'); if (!card) return;
-  $$('#profileGrid .profile-card').forEach(c => c.classList.toggle('active', c === card));
-  settingsDirty = false;
+  const card = e.target.closest('.pace'); if (!card) return;
   try {
-    const out = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ profile: card.dataset.profile }) });
-    applySettingsToForm(out.settings);
-    toast('Profil « ' + card.dataset.profile + ' » appliqué.', 'success');
-    loadPlan();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ profile: card.dataset.profile }) });
+    $$('#profileGrid .pace').forEach(p => p.classList.toggle('active', p === card));
+    toast('Cadence « ' + card.dataset.profile + ' ».', 'success');
+    refreshStatus();
+  } catch (err) { toast(err.message, 'error'); }
 });
 
-function applySettingsToForm(s) {
-  $('#minMinutes').value = s.minMinutes; $('#minMinutesValue').textContent = fmtMin(s.minMinutes);
-  $('#maxMinutes').value = s.maxMinutes; $('#maxMinutesValue').textContent = fmtMin(s.maxMinutes);
-  $('#dailyCap').value = s.dailyCap; $('#dailyCapValue').textContent = Math.round(s.dailyCap);
-  $('#hesitation').value = s.hesitation; $('#hesitationValue').textContent = Math.round(s.hesitation * 100) + ' %';
-  $('#pauseEvery').value = s.pauseEvery; $('#pauseEveryValue').textContent = s.pauseEvery === 0 ? 'jamais' : s.pauseEvery;
-  $('#longPauseMin').value = s.longPauseMin; $('#longPauseMax').value = s.longPauseMax;
-  $('#dayStart').value = s.dayStart; $('#dayEnd').value = s.dayEnd;
-  if (PROFILE_PRESETS[s.profile]) {
-    $$('#profileGrid .profile-card').forEach(c => c.classList.toggle('active', c.dataset.profile === s.profile));
-  }
-}
-
-async function loadSettings() {
-  try {
-    const data = await api('/api/settings');
-    applySettingsToForm(data.settings);
-  } catch (err) {
-    toast('Réglages illisibles : ' + err.message, 'error');
-  }
-}
+$('#dailyCap').addEventListener('input', e => { $('#dailyCapValue').textContent = e.target.value; });
+$('#hesitation').addEventListener('input', e => { $('#hesitationValue').textContent = Math.round(e.target.value * 100) + ' %'; });
+$('#pauseEvery').addEventListener('input', e => { $('#pauseEveryValue').textContent = e.target.value === '0' ? 'jamais' : e.target.value; });
 
 $('#saveSettingsBtn').addEventListener('click', async () => {
-  const body = {
-    profile: 'personnalisé',
-    minMinutes: Number($('#minMinutes').value),
-    maxMinutes: Number($('#maxMinutes').value),
-    dailyCap: Number($('#dailyCap').value),
-    hesitation: Number($('#hesitation').value),
-    pauseEvery: Number($('#pauseEvery').value),
-    longPauseMin: Number($('#longPauseMin').value),
-    longPauseMax: Number($('#longPauseMax').value),
-    dayStart: $('#dayStart').value || '09:00',
-    dayEnd: $('#dayEnd').value || '22:30',
-  };
   try {
-    const out = await api('/api/settings', { method: 'PUT', body: JSON.stringify(body) });
-    applySettingsToForm(out.settings);
-    toast('Cadence enregistrée.', 'success');
-    loadPlan();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+    const current = (await api('/api/settings')).settings; // préserve min/max & pauses non affichées
+    const body = {
+      ...current,
+      profile: 'personnalisé',
+      dailyCap: Number($('#dailyCap').value),
+      hesitation: Number($('#hesitation').value),
+      pauseEvery: Number($('#pauseEvery').value),
+      dayStart: $('#dayStart').value || '09:00',
+      dayEnd: $('#dayEnd').value || '22:30',
+    };
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify(body) });
+    toast('Réglages enregistrés.', 'success');
+    refreshStatus();
+  } catch (err) { toast(err.message, 'error'); }
 });
-
 $('#resetDemoBtn').addEventListener('click', async () => {
-  if (!confirm('Réinitialiser les données de démonstration ? Les compteurs et la liste reviennent à zéro.')) return;
-  try {
-    await api('/api/reset', { method: 'POST' });
-    state.selected.clear();
-    toast('Données de démo réinitialisées.', 'success');
-    await Promise.all([loadFollowers(), refreshStatus(), loadPlan(), loadSettings()]);
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  if (!confirm('Réinitialiser la démo ? Les compteurs et la liste reviennent à zéro.')) return;
+  try { await api('/api/reset', { method: 'POST' }); state.selected.clear(); await Promise.all([loadFollowers(), refreshStatus()]); toast('Démo réinitialisée.', 'success'); }
+  catch (err) { toast(err.message, 'error'); }
 });
 
-/* ─── journal (SSE + historique) ──────────────────────────── */
+/* ─── journal ─── */
 const journalList = $('#journalList');
-const KIND_LABEL = { info: 'info', success: 'ok', warn: 'pause', error: 'erreur' };
-
-function appendJournal(entry, scroll) {
+function appendJournal(entry) {
   if (journalList.querySelector('.journal-empty')) journalList.innerHTML = '';
   const li = document.createElement('li');
   li.className = 'journal-item ' + (entry.kind || 'info');
-  const t = new Date(entry.ts);
-  li.innerHTML = '<time>' + esc(t.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + t.toLocaleTimeString('fr-FR')) + ' · ' + esc(KIND_LABEL[entry.kind] || entry.kind || 'info') + '</time>' + esc(entry.message);
+  const d = new Date(entry.ts);
+  li.innerHTML = '<time>' + esc(fmtTime(d)) + '</time>' + esc(entry.message);
   journalList.appendChild(li);
-  while (journalList.children.length > 120) journalList.removeChild(journalList.firstChild);
-  if (scroll !== false) journalList.scrollTop = journalList.scrollHeight;
+  while (journalList.children.length > 80) journalList.removeChild(journalList.firstChild);
+  journalList.scrollTop = journalList.scrollHeight;
 }
-
 async function loadJournal() {
   try {
     const data = await api('/api/journal');
     journalList.innerHTML = '';
-    if (!data.journal.length) {
-      journalList.innerHTML = '<li class="journal-empty">Rien pour l’instant — les gestes apparaîtront ici en direct.</li>';
-      return;
-    }
-    data.journal.forEach(e => appendJournal(e, false));
-    journalList.scrollTop = journalList.scrollHeight;
+    if (!data.journal.length) { journalList.innerHTML = '<li class="journal-empty hint">Rien pour l’instant — vos gestes s’afficheront ici.</li>'; return; }
+    data.journal.forEach(appendJournal);
   } catch { /* silencieux */ }
 }
-
 $('#clearJournalBtn').addEventListener('click', async () => {
-  try { await api('/api/journal/clear', { method: 'POST' }); journalList.innerHTML = '<li class="journal-empty">Journal effacé.</li>'; }
+  try { await api('/api/journal/clear', { method: 'POST' }); journalList.innerHTML = '<li class="journal-empty hint">Journal effacé.</li>'; }
   catch (err) { toast(err.message, 'error'); }
 });
 
-$('#disconnectBtn').addEventListener('click', async () => {
-  try {
-    await api('/api/disconnect', { method: 'POST' });
-    toast('Compte délié — jeton effacé de la mémoire.', 'success');
-    refreshStatus();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-});
-
+/* ─── connexion TikTok ─── */
 $('#connectionPill').addEventListener('click', (e) => {
-  if (e.target.closest('#disconnectBtn')) return;
+  if (e.target.closest('#disconnectBtn')) {
+    e.stopPropagation();
+    api('/api/disconnect', { method: 'POST' }).then(refreshStatus).catch(err => toast(err.message, 'error'));
+    return;
+  }
   const conn = state.status && state.status.connection;
   if (conn && conn.connected) return;
   if (conn && conn.configured) window.location.href = '/auth/tiktok';
-  else toast('OAuth non configuré : renseignez TIKTOK_CLIENT_KEY / SECRET dans .env (voir README).', 'error');
+  else toast('OAuth non configuré : renseignez TIKTOK_CLIENT_KEY / SECRET dans .env (README).', 'error');
 });
 
-/* ─── flux SSE ────────────────────────────────────────────── */
+/* ─── SSE + minuteries ─── */
 const sse = new EventSource('/api/events');
 sse.addEventListener('journal', (ev) => { try { appendJournal(JSON.parse(ev.data)); } catch { /* ignore */ } });
 sse.addEventListener('status', () => refreshStatus());
 
-/* ─── tic d'une seconde : compte à rebours & refroidissement ─ */
 setInterval(() => {
   const s = state.status;
-  if (s && s.engine) {
-    const eng = s.engine;
-    if (eng.state === 'running' && eng.nextAt) {
-      $('#nextActionTimer').textContent = fmtCountdown(eng.nextAt - Date.now());
-      $('#nextActionKind').textContent = eng.nextLabel ? '· ' + eng.nextLabel : '';
-    } else if (eng.state === 'paused') {
-      $('#nextActionTimer').textContent = '––:––';
-      $('#nextActionKind').textContent = 'en pause — reprenez quand vous voulez';
-    } else {
-      $('#nextActionTimer').textContent = '––:––';
-      $('#nextActionKind').textContent = 'en attente de démarrage';
-    }
-    // décompte du refroidissement, rafraîchi localement entre deux polls
-    if (!s.canAct.ok && s.canAct.code === 'cooldown' && s.canAct.retryAfterMs != null) {
-      s.canAct.retryAfterMs = Math.max(0, s.canAct.retryAfterMs - 1000);
-      $('#cooldownLine').textContent = 'Prochain geste manuel : encore ' + Math.ceil(s.canAct.retryAfterMs / 1000) + ' s';
-    }
+  if (s && !s.canAct.ok && s.canAct.code === 'cooldown') {
+    s.canAct.retryAfterMs = Math.max(0, (s.canAct.retryAfterMs || 0) - 1000);
+    const cd = $('#cooldownText');
+    cd.textContent = 'Prochain geste possible dans ' + Math.ceil(s.canAct.retryAfterMs / 1000) + ' s';
+    if (s.canAct.retryAfterMs === 0) refreshStatus();
   }
+  renderRing();
 }, 1000);
-
-// re-poll complet toutes les 5 s (corrige toute dérive locale)
 setInterval(refreshStatus, 5000);
 
-/* ─── démarrage ───────────────────────────────────────────── */
+/* ─── démarrage ─── */
 (async function boot() {
   if (new URLSearchParams(location.search).get('connected') === '1') {
-    toast('Compte TikTok lié avec succès.', 'success');
+    toast('Compte TikTok lié.', 'success');
     history.replaceState(null, '', '/');
   }
-  await Promise.all([refreshStatus(), loadFollowers(), loadJournal(), loadPlan(), loadSettings()]);
+  await Promise.all([refreshStatus(), loadFollowers(), loadJournal()]);
+  // refléter les réglages serveur dans les contrôles avancés
+  try {
+    const data = await api('/api/settings');
+    const s = data.settings;
+    $('#dailyCap').value = s.dailyCap; $('#dailyCapValue').textContent = s.dailyCap;
+    $('#hesitation').value = s.hesitation; $('#hesitationValue').textContent = Math.round(s.hesitation * 100) + ' %';
+    $('#pauseEvery').value = s.pauseEvery; $('#pauseEveryValue').textContent = s.pauseEvery === 0 ? 'jamais' : s.pauseEvery;
+    $('#dayStart').value = s.dayStart; $('#dayEnd').value = s.dayEnd;
+    $$('#profileGrid .pace').forEach(p => p.classList.toggle('active', p.dataset.profile === s.profile));
+  } catch { /* réglages optionnels à l'écran */ }
+  renderRing();
 })();
